@@ -1,6 +1,7 @@
+import Link from "next/link";
 import type { NormalizedPnL } from "@/lib/data/types";
 import { getBadge, getReputationScore } from "@/lib/pnl/score";
-import { formatUsd, formatPct, truncateAddress } from "@/lib/format";
+import { formatUsd, formatPct, truncateAddress, integrityDisplay } from "@/lib/format";
 import { BadgeTier } from "./BadgeTier";
 
 /** Uygulama içi PnL kartı önizlemesi — OG kartıyla aynı tasarım dili. */
@@ -8,6 +9,7 @@ export function PnlCard({ pnl }: { pnl: NormalizedPnL }) {
   const badge = getBadge(pnl);
   const score = getReputationScore(pnl);
   const positive = pnl.roiPct >= 0;
+  const integ = integrityDisplay(pnl.integrity);
 
   return (
     <div
@@ -22,8 +24,22 @@ export function PnlCard({ pnl }: { pnl: NormalizedPnL }) {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <div className="muted" style={{ fontSize: 14 }}>
-          Kanıtlanmış ROI • son {pnl.windowDays} gün
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span className="muted" style={{ fontSize: 14 }}>
+            Kanıtlanmış ROI • son {pnl.windowDays} gün
+          </span>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: integ.color,
+              border: `1px solid ${integ.color}`,
+              borderRadius: 999,
+              padding: "2px 8px",
+            }}
+          >
+            {integ.text}
+          </span>
         </div>
         <div
           style={{
@@ -50,7 +66,7 @@ export function PnlCard({ pnl }: { pnl: NormalizedPnL }) {
         className="muted"
         style={{ display: "flex", justifyContent: "space-between", marginTop: 16, fontSize: 12 }}
       >
-        <span>{truncateAddress(pnl.address)} • Base</span>
+        <Link href={`/trader/${pnl.address}`}>{truncateAddress(pnl.address)} • Base</Link>
         <span>
           proof:{pnl.proofHash}
           {pnl.noiseFilteredCount > 0 && ` • ${pnl.noiseFilteredCount} spam elendi`}

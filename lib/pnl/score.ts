@@ -38,7 +38,7 @@ export function getBadge(pnl: NormalizedPnL): Badge {
  * daha dirençli bir tek-sayı itibar.
  */
 export function getReputationScore(pnl: NormalizedPnL): number {
-  const { roiPct, netInvestedUsd, tradeCount, noiseFilteredCount } = pnl;
+  const { roiPct, netInvestedUsd, tradeCount, noiseFilteredCount, integrity } = pnl;
 
   // ROI bileşeni (0–55): logaritmik, +%200'de doyuma yaklaşır.
   const roiComponent =
@@ -53,8 +53,19 @@ export function getReputationScore(pnl: NormalizedPnL): number {
   // Gürültü cezası: spam oranı yüksekse güven düşer.
   const totalSeen = tradeCount + noiseFilteredCount;
   const noiseRatio = totalSeen > 0 ? noiseFilteredCount / totalSeen : 0;
-  const penalty = noiseRatio * 15;
+  const noisePenalty = noiseRatio * 15;
 
-  const score = roiComponent + capitalComponent + activityComponent - penalty;
+  // Manipülasyon cezası (0–30): churn ve tek-pair yoğunlaşması itibarı düşürür;
+  // "flagged" durum ROI'den kazanılanı büyük oranda geri alır.
+  const churnPenalty = (integrity.churnRatioPct / 100) * 20;
+  const flagPenalty = integrity.label === "flagged" ? 10 : 0;
+  const manipulationPenalty = Math.min(30, churnPenalty + flagPenalty);
+
+  const score =
+    roiComponent +
+    capitalComponent +
+    activityComponent -
+    noisePenalty -
+    manipulationPenalty;
   return Math.max(0, Math.min(100, Math.round(score)));
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { NormalizedPnL, RawPnL, RawTrade } from "@/lib/data/types";
+import { computeIntegrity } from "./integrity";
 
 /**
  * Ham sağlayıcı çıktısını uygulamanın kullandığı normalize PnL'e çevirir.
@@ -46,6 +47,7 @@ export function normalizePnL(
 
     computedAt: Date.now(),
     proofHash: proofHashOf(raw.address, genuine),
+    integrity: computeIntegrity(genuine),
   };
 }
 

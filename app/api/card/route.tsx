@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { NextRequest } from "next/server";
 import { getNormalizedPnL } from "@/lib/pnl/service";
 import { getBadge, getReputationScore } from "@/lib/pnl/score";
-import { formatUsd, formatPct, truncateAddress } from "@/lib/format";
+import { formatUsd, formatPct, truncateAddress, integrityDisplay } from "@/lib/format";
 import { APP_NAME } from "@/lib/config";
 
 export const runtime = "nodejs";
@@ -34,6 +34,7 @@ function pnlCard(pnl: Awaited<ReturnType<typeof getNormalizedPnL>>) {
   const badge = getBadge(pnl);
   const score = getReputationScore(pnl);
   const positive = pnl.roiPct >= 0;
+  const integ = integrityDisplay(pnl.integrity);
 
   return new ImageResponse(
     (
@@ -73,8 +74,23 @@ function pnlCard(pnl: Awaited<ReturnType<typeof getNormalizedPnL>>) {
 
         {/* Orta: dev ROI */}
         <div style={{ display: "flex", flexDirection: "column", marginTop: 56 }}>
-          <div style={{ fontSize: 34, color: "#8b97ad", display: "flex" }}>
-            Kanıtlanmış ROI • son {pnl.windowDays} gün
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ fontSize: 34, color: "#8b97ad", display: "flex" }}>
+              Kanıtlanmış ROI • son {pnl.windowDays} gün
+            </div>
+            <div
+              style={{
+                display: "flex",
+                fontSize: 28,
+                fontWeight: 700,
+                color: integ.color,
+                border: `2px solid ${integ.color}`,
+                borderRadius: 999,
+                padding: "4px 18px",
+              }}
+            >
+              {integ.text}
+            </div>
           </div>
           <div
             style={{

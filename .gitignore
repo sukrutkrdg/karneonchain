@@ -12,6 +12,6 @@ next-env.d.ts
 .DS_Store
 .vercel
 
-# Claude Code yerel ayarları / ajanlar (repoya girmez)
+# Yerel editör/araç ayarları (repoya girmez)
 .claude
 .claude/

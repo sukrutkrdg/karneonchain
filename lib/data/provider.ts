@@ -1,5 +1,6 @@
 import type { RawPnL } from "./types";
 import { ZerionProvider } from "./zerion";
+import { IndexerProvider } from "./indexer";
 
 /**
  * Hibrit veri stratejisinin teknik karşılığı: tüm sağlayıcılar bu arayüzü
@@ -24,10 +25,9 @@ export function getProvider(): PnLProvider {
   const which = (process.env.PNL_PROVIDER || "zerion").toLowerCase();
   switch (which) {
     case "indexer":
-      // Faz 2'de eklenecek; şu an Zerion'a düşer.
-      throw new Error(
-        "indexer sağlayıcısı henüz uygulanmadı (Faz 2). PNL_PROVIDER=zerion kullanın."
-      );
+      // Kendi Base RPC log-decode katmanımız (USDC-quoted FIFO realized PnL).
+      cached = new IndexerProvider();
+      return cached;
     case "zerion":
     default:
       cached = new ZerionProvider();

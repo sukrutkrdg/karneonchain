@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useAccount } from "wagmi";
 import { useQuery } from "@tanstack/react-query";
 import { useMiniKit, useComposeCast } from "@coinbase/onchainkit/minikit";
@@ -33,6 +34,17 @@ export default function Home() {
     enabled: isConnected && !!address,
   });
 
+  // PnL hesaplanınca kullanıcıyı leaderboard'a otomatik kaydet (best-effort).
+  useEffect(() => {
+    if (pnl && address) {
+      fetch("/api/leaderboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address }),
+      }).catch(() => {});
+    }
+  }, [pnl, address]);
+
   function shareCard() {
     if (!address) return;
     const shareUrl = `${APP_URL}/share/${address}`;
@@ -53,6 +65,14 @@ export default function Home() {
           Cüzdanını bağla, Base&apos;teki gerçek, manipüle edilemez PnL&apos;ini
           kanıtla ve kartını cast&apos;le.
         </p>
+        <nav style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <Link href="/leaderboard" className="btn btn-secondary" style={{ width: "auto", padding: "8px 14px" }}>
+            🏆 Liderlik
+          </Link>
+          <Link href="/compare" className="btn btn-secondary" style={{ width: "auto", padding: "8px 14px" }}>
+            ⚔️ Kapıştır
+          </Link>
+        </nav>
       </header>
 
       {!isConnected && (

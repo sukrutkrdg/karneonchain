@@ -17,3 +17,20 @@ export function truncateAddress(addr: string): string {
   if (!addr || addr.length < 10) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
+
+import type { IntegritySignal } from "@/lib/data/types";
+
+/** Integrity etiketini gösterim metni + rengine çevirir (kart ve bileşenlerde ortak). */
+export function integrityDisplay(integrity: IntegritySignal): {
+  text: string;
+  color: string;
+} {
+  switch (integrity.label) {
+    case "flagged":
+      return { text: "⚠ Şüpheli hacim", color: "#ef4444" };
+    case "watch":
+      return { text: "◔ İzlemede", color: "#f59e0b" };
+    default:
+      return { text: "✓ Doğrulanabilir", color: "#22c55e" };
+  }
+}

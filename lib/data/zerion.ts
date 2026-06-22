@@ -67,7 +67,7 @@ type TxResponse = {
       transfers?: Array<{
         direction?: "in" | "out" | "self";
         value?: number | null;
-        fungible_info?: { flags?: { verified?: boolean } };
+        fungible_info?: { symbol?: string; flags?: { verified?: boolean } };
       }>;
     };
   }>;
@@ -130,6 +130,10 @@ export class ZerionProvider implements PnLProvider {
         const hasVerifiedAsset = transfers.some(
           (x) => x.fungible_info?.flags?.verified === true
         );
+        const boughtSymbol =
+          transfers.find((x) => x.direction === "in")?.fungible_info?.symbol ?? "";
+        const soldSymbol =
+          transfers.find((x) => x.direction === "out")?.fungible_info?.symbol ?? "";
         return {
           hash: at.hash ?? "",
           minedAt: at.mined_at ? Date.parse(at.mined_at) : 0,
@@ -137,6 +141,8 @@ export class ZerionProvider implements PnLProvider {
           isTrash: at.flags?.is_trash === true,
           hasVerifiedAsset,
           valueUsd,
+          boughtSymbol,
+          soldSymbol,
         };
       })
       .filter((t) => t.hash && t.minedAt >= since);
