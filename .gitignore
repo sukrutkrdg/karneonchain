@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+build
+.env
+.env.*
+!.env.example
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.vercel
+
+# Claude Code yerel ayarları / ajanlar (repoya girmez)
+.claude
+.claude/
