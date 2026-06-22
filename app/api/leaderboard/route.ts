@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
+import { isAddress } from "viem";
 import { getTop, recordWallet, getRank } from "@/lib/leaderboard";
 import { getNormalizedPnL, InvalidAddressError } from "@/lib/pnl/service";
+import { rateLimit, clientKey, tooMany } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -24,11 +26,8 @@ export async function GET(req: NextRequest) {
     const snapshots = await getTop(metric, limit);
     return Response.json({ metric, limit, data: snapshots });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
-    return Response.json(
-      { error: "Liderboard alınamadı", detail: message },
-      { status: 500 }
-    );
+    console.error("[/api/leaderboard GET]", err);
+    return Response.json({ error: "Liderboard alınamadı" }, { status: 500 });
   }
 }
 
@@ -37,6 +36,10 @@ export async function GET(req: NextRequest) {
  * Cüzdanın PnL'ini hesaplar, liderboard'a kaydeder ve güncel sırasını döndürür.
  */
 export async function POST(req: NextRequest) {
+  // Yazma + pahalı hesaplama → sıkı limit (kimliksiz; Faz 2'de auth eklenecek).
+  const rl = await rateLimit(`lb-post:${clientKey(req)}`, 10, 60);
+  if (!rl.ok) return tooMany();
+
   let body: unknown;
   try {
     body = await req.json();
@@ -44,19 +47,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Geçersiz JSON gövdesi" }, { status: 400 });
   }
 
-  if (!body || typeof body !== "object" || !("address" in body)) {
-    return Response.json(
-      { error: "'address' alanı gerekli" },
-      { status: 400 }
-    );
-  }
-
-  const address = (body as Record<string, unknown>).address;
-  if (typeof address !== "string" || !address) {
-    return Response.json(
-      { error: "'address' string olmalı" },
-      { status: 400 }
-    );
+  const address =
+    body && typeof body === "object"
+      ? (body as Record<string, unknown>).address
+      : undefined;
+  // Pahalı işe girmeden adresi erken doğrula.
+  if (typeof address !== "string" || !isAddress(address)) {
+    return Response.json({ error: "Geçerli bir 'address' gerekli" }, { status: 400 });
   }
 
   try {
@@ -85,12 +82,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     if (err instanceof InvalidAddressError) {
-      return Response.json({ error: err.message }, { status: 400 });
+      return Response.json({ error: "Geçersiz adres" }, { status: 400 });
     }
-    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
-    return Response.json(
-      { error: "Liderboard kaydı başarısız", detail: message },
-      { status: 502 }
-    );
+    console.error("[/api/leaderboard POST]", err);
+    return Response.json({ error: "Liderboard kaydı başarısız" }, { status: 502 });
   }
 }

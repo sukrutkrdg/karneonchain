@@ -53,7 +53,8 @@ export function computeIntegrity(trades: RawTrade[]): IntegritySignal {
     const key = `${norm(t.soldSymbol)}>${norm(t.boughtSymbol)}`;
     pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
   }
-  const maxPair = Math.max(...pairCounts.values());
+  // Boş map'te Math.max(...[]) === -Infinity → guard.
+  const maxPair = pairCounts.size > 0 ? Math.max(...pairCounts.values()) : 0;
   const topPairConcentrationPct = round1((maxPair / n) * 100);
 
   // 3) Etiketleme — az işlemde yargıda bulunma.

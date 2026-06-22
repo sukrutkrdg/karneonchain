@@ -122,7 +122,7 @@ export default async function LeaderboardPage({ searchParams }: Props) {
             return (
               <li key={snap.address}>
                 <Link
-                  href={`/share/${snap.address}`}
+                  href={`/trader/${snap.address}`}
                   style={{ display: "block", textDecoration: "none" }}
                 >
                   <div

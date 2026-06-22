@@ -3,7 +3,8 @@ import { NextRequest } from "next/server";
 import { getNormalizedPnL } from "@/lib/pnl/service";
 import { getBadge, getReputationScore } from "@/lib/pnl/score";
 import { formatUsd, formatPct, truncateAddress, integrityDisplay } from "@/lib/format";
-import { APP_NAME } from "@/lib/config";
+import { APP_NAME, parseWindowDays } from "@/lib/config";
+import { rateLimit, clientKey } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
@@ -18,8 +19,11 @@ const HEIGHT = 800;
  */
 export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get("address");
-  const windowParam = req.nextUrl.searchParams.get("window");
-  const windowDays = windowParam ? parseInt(windowParam, 10) : undefined;
+  const windowDays = parseWindowDays(req.nextUrl.searchParams.get("window"));
+
+  // Kart hesaplama da pahalı; kötüye kullanımı sınırla (marka kartına düşer).
+  const rl = await rateLimit(`card:${clientKey(req)}`, 60, 60);
+  if (!rl.ok) return brandingCard();
 
   try {
     if (!address) return brandingCard();

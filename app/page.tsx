@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
 import { useQuery } from "@tanstack/react-query";
@@ -30,13 +30,18 @@ export default function Home() {
 
   const { data: pnl, isLoading, error } = useQuery({
     queryKey: ["pnl", address],
-    queryFn: () => fetchPnl(address as string),
+    queryFn: () => fetchPnl(address!),
     enabled: isConnected && !!address,
+    staleTime: 5 * 60 * 1000, // API cache TTL'i ile aynı → focus'ta refetch yok.
+    retry: false, // 400/502 kalıcı; tekrar deneme spinner'ı uzatır.
   });
 
-  // PnL hesaplanınca kullanıcıyı leaderboard'a otomatik kaydet (best-effort).
+  // PnL hesaplanınca kullanıcıyı leaderboard'a bir kez kaydet (best-effort).
+  // ref guard: query referans değişimi/refetch'te POST'un tekrar atmasını önler.
+  const recordedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (pnl && address) {
+    if (pnl && address && recordedFor.current !== address) {
+      recordedFor.current = address;
       fetch("/api/leaderboard", {
         method: "POST",
         headers: { "content-type": "application/json" },

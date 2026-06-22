@@ -33,10 +33,25 @@ import { base } from "viem/chains";
  * createPublicClient'ın döndürdüğü somut tip, çıplak `PublicClient` tipine
  * atanamaz. Tüm yardımcılarda bu türetilmiş tipi kullanarak tip uyumunu sağlıyoruz.
  */
+const DEFAULT_BASE_RPC = "https://mainnet.base.org";
+
+/** BASE_RPC_URL'i doğrula (https zorunlu); geçersizse public RPC'ye düş. */
+function resolveRpcUrl(): string {
+  const url = process.env.BASE_RPC_URL;
+  if (!url) return DEFAULT_BASE_RPC;
+  try {
+    if (new URL(url).protocol !== "https:") throw new Error("https gerekli");
+    return url;
+  } catch {
+    console.error("[indexer] Geçersiz BASE_RPC_URL (https olmalı) — public RPC'ye düşülüyor");
+    return DEFAULT_BASE_RPC;
+  }
+}
+
 function makeBaseClient() {
   return createPublicClient({
     chain: base,
-    transport: http(process.env.BASE_RPC_URL || "https://mainnet.base.org"),
+    transport: http(resolveRpcUrl()),
   });
 }
 type BaseClient = ReturnType<typeof makeBaseClient>;
@@ -66,6 +81,8 @@ export type SwapEvent = {
   hash: string;
   minedAt: number; // unix ms
   blockNumber: bigint;
+  /** Blok içi tx sırası — aynı blokta FIFO sıralaması için. */
+  txIndex: number;
   /** Alınan (in) token adresi + ham miktar. */
   boughtToken: string;
   boughtRaw: bigint;
@@ -89,6 +106,8 @@ export type FifoResult = {
   realizedPnlUsd: number;
   /** Hâlâ konuşlu (açık lotlarda kilitli) toplam USD maliyeti. */
   netInvestedUsd: number;
+  /** Kapanan pozisyonların FIFO ile eşleşen toplam maliyeti — ROI paydası. */
+  matchedCostUsd: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +132,7 @@ export function computeFifoPnL(
   // token adresi -> açık lot kuyruğu (FIFO).
   const lots = new Map<string, Lot[]>();
   let realizedPnlUsd = 0;
+  let matchedCostUsd = 0;
 
   /** Ham miktarı insan-okunur sayıya çevir (USD değeri için). */
   const toUnits = (raw: bigint, dec: number): number => {
@@ -121,8 +141,9 @@ export function computeFifoPnL(
   };
 
   const ordered = [...swaps].sort((a, b) => {
-    if (a.blockNumber === b.blockNumber) return a.minedAt - b.minedAt;
-    return a.blockNumber < b.blockNumber ? -1 : 1;
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber < b.blockNumber ? -1 : 1;
+    // Aynı blok: blok zaman damgası eşit olduğundan tx sırasıyla ayır.
+    return a.txIndex - b.txIndex;
   });
 
   for (const s of ordered) {
@@ -142,6 +163,7 @@ export function computeFifoPnL(
       // Token satıldı, USDC alındı → FIFO ile maliyeti düş.
       const proceedsUsd = toUnits(s.boughtRaw, decimalsOf(s.boughtToken));
       const q = lots.get(s.soldToken) ?? [];
+      const soldTotal = s.soldRaw;
       let toSell = s.soldRaw;
       let matchedCost = 0;
 
@@ -162,9 +184,15 @@ export function computeFifoPnL(
       }
       lots.set(s.soldToken, q);
 
-      // FIFO ile eşleşen maliyete karşı gerçekleşmiş kar/zarar.
-      // (Eşleşmeyen kısım — elde lot yoksa — maliyetsiz kabul edilir.)
-      realizedPnlUsd += proceedsUsd - matchedCost;
+      // YALNIZCA FIFO ile eşleşen miktarın geliri gerçekleşmiş PnL'e girer.
+      // Eşleşmeyen kısım (pencere öncesi veya token-için-token edinilmiş, maliyeti
+      // bilinmeyen pozisyon) HARİÇ tutulur — aksi halde maliyetsiz "saf kâr" gibi
+      // sayılır ve ROI manipüle edilebilir/şişer.
+      const matchedRaw = soldTotal - toSell;
+      const matchedProceeds =
+        soldTotal > 0n ? proceedsUsd * (Number(matchedRaw) / Number(soldTotal)) : 0;
+      realizedPnlUsd += matchedProceeds - matchedCost;
+      matchedCostUsd += matchedCost;
     }
   }
 
@@ -176,7 +204,7 @@ export function computeFifoPnL(
     }
   }
 
-  return { realizedPnlUsd, netInvestedUsd };
+  return { realizedPnlUsd, netInvestedUsd, matchedCostUsd };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +254,12 @@ export class IndexerProvider implements PnLProvider {
     const netInvested = round2(fifo.netInvestedUsd);
     const unrealized = 0; // MVP: oracle yok (bkz. dosya başı kısıt).
     const total = round2(realized + unrealized);
-    const realizedRoi = netInvested > 0 ? round2((realized / netInvested) * 100) : 0;
-    const totalRoi = netInvested > 0 ? round2((total / netInvested) * 100) : 0;
+    // ROI paydası = kapanan pozisyonların maliyeti (matchedCost). Açık-lot
+    // maliyetine bölmek, tüm pozisyonlarını kapatmış cüzdanda ROI'yi yanlışça
+    // 0 gösterirdi.
+    const matchedCost = fifo.matchedCostUsd;
+    const realizedRoi = matchedCost > 0 ? round2((realized / matchedCost) * 100) : 0;
+    const totalRoi = matchedCost > 0 ? round2((total / matchedCost) * 100) : 0;
 
     return {
       address: lower,
@@ -255,33 +287,47 @@ export class IndexerProvider implements PnLProvider {
     toBlock: bigint
   ): Promise<TransferLog[]> {
     const out: TransferLog[] = [];
-
     for (let start = fromBlock; start <= toBlock; start += CHUNK_BLOCKS) {
       const end = start + CHUNK_BLOCKS - 1n > toBlock ? toBlock : start + CHUNK_BLOCKS - 1n;
-      try {
-        const [asSender, asReceiver] = await Promise.all([
-          client.getLogs({
-            event: TRANSFER_EVENT,
-            args: { from: wallet },
-            fromBlock: start,
-            toBlock: end,
-          }),
-          client.getLogs({
-            event: TRANSFER_EVENT,
-            args: { to: wallet },
-            fromBlock: start,
-            toBlock: end,
-          }),
-        ]);
-        out.push(...(asSender as TransferLog[]), ...(asReceiver as TransferLog[]));
-      } catch {
-        // Chunk başarısız (RPC range/rate limiti) → atla, kalan pencereyi sürdür.
-        // Üretimde burada log/metrik atılabilir.
-        continue;
-      }
+      await this.fetchRange(client, wallet, start, end, out, 0);
     }
-
     return out;
+  }
+
+  /**
+   * Bir blok aralığının Transfer loglarını çeker; RPC hata verirse aralığı ikiye
+   * bölerek yeniden dener (range/rate limiti). FIFO tam ve sıralı geçmiş gerektirir:
+   * başarısız aralığı SESSİZCE ATLAMAK eksik buy lot'ları yüzünden satışları
+   * "maliyetsiz kâr" gibi gösterir ve sonucu deterministik olmaktan çıkarır. Bu
+   * yüzden tek bloğa kadar inip hâlâ başarısızsa tüm isteği başarısız kılarız.
+   */
+  private async fetchRange(
+    client: BaseClient,
+    wallet: Address,
+    start: bigint,
+    end: bigint,
+    out: TransferLog[],
+    depth: number
+  ): Promise<void> {
+    try {
+      const [asSender, asReceiver] = await Promise.all([
+        client.getLogs({ event: TRANSFER_EVENT, args: { from: wallet }, fromBlock: start, toBlock: end }),
+        client.getLogs({ event: TRANSFER_EVENT, args: { to: wallet }, fromBlock: start, toBlock: end }),
+      ]);
+      out.push(...(asSender as TransferLog[]), ...(asReceiver as TransferLog[]));
+    } catch (err) {
+      if (end > start && depth < 24) {
+        const mid = start + (end - start) / 2n;
+        await this.fetchRange(client, wallet, start, mid, out, depth + 1);
+        await this.fetchRange(client, wallet, mid + 1n, end, out, depth + 1);
+        return;
+      }
+      throw new Error(
+        `Base RPC log taraması başarısız (blok ${start}-${end}): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
   /**
@@ -297,6 +343,7 @@ export class IndexerProvider implements PnLProvider {
     // tx hash -> (token -> net delta)
     const byTx = new Map<string, Map<string, bigint>>();
     const blockOfTx = new Map<string, bigint>();
+    const txIndexOfTx = new Map<string, number>();
 
     for (const log of logs) {
       const hash = log.transactionHash;
@@ -317,6 +364,7 @@ export class IndexerProvider implements PnLProvider {
         m = new Map();
         byTx.set(hash, m);
         if (log.blockNumber != null) blockOfTx.set(hash, log.blockNumber);
+        txIndexOfTx.set(hash, log.transactionIndex ?? 0);
       }
       m.set(token, (m.get(token) ?? 0n) + delta);
     }
@@ -336,9 +384,16 @@ export class IndexerProvider implements PnLProvider {
       // Swap = en az bir giriş VE en az bir çıkış. Tek yönlü ise atla.
       if (ins.length === 0 || outs.length === 0) continue;
 
-      // Basitleştirme: en büyük mutlak değerli giriş/çıkış bacaklarını al.
-      const bought = ins.reduce((a, b) => (b.netRaw > a.netRaw ? b : a));
-      const sold = outs.reduce((a, b) => (b.netRaw < a.netRaw ? b : a));
+      // Bacak seçimi: PnL yalnızca USDC-quote'lu trade'lerden hesaplandığı için
+      // bir tarafta quote token varsa onu seç (çok-bacaklı/dust içeren routed
+      // swap'larda en büyük bacağı körlemesine almak quote'u kaçırıp yanlış
+      // fiyatlamaya yol açar). Quote yoksa en büyük mutlak bacağı al.
+      const bought =
+        ins.find((d) => isQuoteToken(d.token)) ??
+        ins.reduce((a, b) => (b.netRaw > a.netRaw ? b : a));
+      const sold =
+        outs.find((d) => isQuoteToken(d.token)) ??
+        outs.reduce((a, b) => (b.netRaw < a.netRaw ? b : a));
 
       const blockNumber = blockOfTx.get(hash) ?? 0n;
       let minedAt = blockTime.get(blockNumber);
@@ -351,6 +406,7 @@ export class IndexerProvider implements PnLProvider {
         hash,
         minedAt,
         blockNumber,
+        txIndex: txIndexOfTx.get(hash) ?? 0,
         boughtToken: bought.token,
         boughtRaw: bought.netRaw,
         soldToken: sold.token,

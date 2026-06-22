@@ -14,19 +14,10 @@
  * Faz 2'de Base Pay / USDC akış ödemesi eklenecek.
  */
 
-import { Redis } from "@upstash/redis";
+import { getRedis } from "@/lib/redis";
 
-// ---------------------------------------------------------------------------
-// Redis bağlantısı (lib/redis.ts kalıbını kopyala — kendi istemci örneği)
-// ---------------------------------------------------------------------------
-
-let redis: Redis | null = null;
-if (process.env.REDIS_URL && process.env.REDIS_TOKEN) {
-  redis = new Redis({
-    url: process.env.REDIS_URL,
-    token: process.env.REDIS_TOKEN,
-  });
-}
+// Merkezi Redis istemcisi (set/hash komutları için ham client).
+const redis = getRedis();
 
 // Bellek-içi yedek (yerel geliştirme için)
 const memSets = new Map<string, Set<string>>();

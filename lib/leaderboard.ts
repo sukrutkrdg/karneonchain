@@ -8,20 +8,12 @@
  * yerel geliştirmede deployment'sız çalışır.
  */
 
-import { Redis } from "@upstash/redis";
+import { getRedis } from "@/lib/redis";
 import { getBadge, getReputationScore } from "@/lib/pnl/score";
 import type { NormalizedPnL } from "@/lib/data/types";
 
-// ---------------------------------------------------------------------------
-// Redis istemcisi (kendi örneği — lib/redis.ts yalnızca get/set sunar)
-// ---------------------------------------------------------------------------
-let redis: Redis | null = null;
-if (process.env.REDIS_URL && process.env.REDIS_TOKEN) {
-  redis = new Redis({
-    url: process.env.REDIS_URL,
-    token: process.env.REDIS_TOKEN,
-  });
-}
+// Merkezi Redis istemcisi (sorted-set/hash komutları için ham client).
+const redis = getRedis();
 
 // ---------------------------------------------------------------------------
 // Snapshot tipi — liderboard satırında gösterilen tüm alanlar
@@ -91,6 +83,9 @@ const KEY_ROI = "lb:roi";
 const KEY_SCORE = "lb:score";
 const KEY_DATA = "lb:data";
 
+/** Liderboard sorted-set'lerinde tutulacak maksimum kayıt (sınırsız büyüme koruması). */
+const MAX_ENTRIES = 5000;
+
 // ---------------------------------------------------------------------------
 // Dışa açık fonksiyonlar
 // ---------------------------------------------------------------------------
@@ -122,6 +117,11 @@ export async function recordWallet(pnl: NormalizedPnL): Promise<void> {
     pipe.zadd(KEY_ROI, { score: pnl.roiPct, member: address });
     pipe.zadd(KEY_SCORE, { score: reputation, member: address });
     pipe.hset(KEY_DATA, { [address]: JSON.stringify(snapshot) });
+    // Set boyutunu sınırla: yalnızca en yüksek puanlı ilk MAX_ENTRIES kalsın
+    // (kimliksiz POST ile sınırsız büyümeye karşı). En düşük sıradakileri at.
+    // NOT: lb:data hash'i orphan bırakabilir — Faz 2'de periyodik temizlik.
+    pipe.zremrangebyrank(KEY_ROI, 0, -(MAX_ENTRIES + 1));
+    pipe.zremrangebyrank(KEY_SCORE, 0, -(MAX_ENTRIES + 1));
     await pipe.exec();
   } else {
     // Bellek-içi fallback

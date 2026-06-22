@@ -19,3 +19,15 @@ export const PNL_WINDOW_DAYS = 90;
 
 /** Base mainnet chain id — MVP yalnızca Base. */
 export const BASE_CHAIN_ID = 8453;
+
+/**
+ * `?window=` parametresini güvenle ayrıştırır: 1–365 gün aralığına clamp,
+ * NaN/negatif/aşırı değerlerde varsayılana döner. Doğrulanmamış değer cache
+ * anahtarını kirletir ve Zerion/indexer pencere matematiğini bozar.
+ */
+export function parseWindowDays(param: string | null | undefined): number {
+  if (!param) return PNL_WINDOW_DAYS;
+  const n = parseInt(param, 10);
+  if (!Number.isInteger(n) || n < 1 || n > 365) return PNL_WINDOW_DAYS;
+  return n;
+}

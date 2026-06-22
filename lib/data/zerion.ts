@@ -18,8 +18,10 @@ function authHeader(): string {
   return `Basic ${token}`;
 }
 
-async function zfetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${ZERION_BASE}${path}`, {
+async function zfetch<T>(pathOrUrl: string): Promise<T> {
+  // links.next mutlak URL döner; path verilirse base'i ekle.
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${ZERION_BASE}${pathOrUrl}`;
+  const res = await fetch(url, {
     headers: {
       accept: "application/json",
       authorization: authHeader(),
@@ -71,6 +73,7 @@ type TxResponse = {
       }>;
     };
   }>;
+  links?: { next?: string };
 };
 
 export class ZerionProvider implements PnLProvider {
@@ -108,43 +111,65 @@ export class ZerionProvider implements PnLProvider {
     };
   }
 
-  /** Base zincirinde, pencere içindeki gerçek swap işlemleri. */
+  /**
+   * Base zincirinde, pencere içindeki gerçek swap işlemleri.
+   * `links.next` ile sayfalanır (tek sayfa 100 ile kesilirse tradeCount/churn/
+   * proofHash bozuk küme üzerinden hesaplanırdı). Güvenlik için sayfa ve
+   * toplam-trade sınırı var; yalnızca pencere içindeki `confirmed` trade'ler.
+   */
   private async fetchTrades(
     addr: string,
     windowDays: number
   ): Promise<RawTrade[]> {
-    const res = await zfetch<TxResponse>(
-      `/wallets/${addr}/transactions/?currency=usd` +
-        `&filter[chain_ids]=base&filter[operation_types]=trade&page[size]=100`
-    );
-
     const since = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const sinceSec = Math.floor(since / 1000);
 
-    return (res.data ?? [])
-      .map((t): RawTrade => {
+    let url: string | undefined =
+      `/wallets/${addr}/transactions/?currency=usd` +
+      `&filter[chain_ids]=base&filter[operation_types]=trade` +
+      `&filter[min_mined_at]=${sinceSec}&page[size]=100`;
+
+    const MAX_PAGES = 10; // <= 1000 trade; aşırı aktif cüzdanlarda DoS/maliyet sınırı.
+    const MAX_TRADES = 1000;
+    const out: RawTrade[] = [];
+
+    for (let page = 0; page < MAX_PAGES && url; page++) {
+      const res: TxResponse = await zfetch<TxResponse>(url);
+      for (const t of res.data ?? []) {
         const at = t.attributes ?? {};
+        // Yalnızca onaylanmış işlemler — pending/failed proofHash'i ve
+        // heuristikleri bozar.
+        if (at.status && at.status !== "confirmed") continue;
         const transfers = at.transfers ?? [];
-        const valueUsd = transfers
-          .filter((x) => x.direction === "in")
-          .reduce((sum, x) => sum + Math.abs(num(x.value)), 0);
         const hasVerifiedAsset = transfers.some(
           (x) => x.fungible_info?.flags?.verified === true
         );
+        // Trade hacmi: tek "in" bacağın USD değeri (toplamak çoklu-in/dust'ı
+        // şişirir). En büyük tek in-leg değeri.
+        const valueUsd = transfers
+          .filter((x) => x.direction === "in")
+          .reduce((max, x) => Math.max(max, Math.abs(num(x.value))), 0);
         const boughtSymbol =
           transfers.find((x) => x.direction === "in")?.fungible_info?.symbol ?? "";
         const soldSymbol =
           transfers.find((x) => x.direction === "out")?.fungible_info?.symbol ?? "";
-        return {
-          hash: at.hash ?? "",
-          minedAt: at.mined_at ? Date.parse(at.mined_at) : 0,
-          status: (at.status as RawTrade["status"]) ?? "confirmed",
+        const minedAt = at.mined_at ? Date.parse(at.mined_at) : 0;
+        if (!at.hash || minedAt < since) continue;
+        out.push({
+          hash: at.hash,
+          minedAt,
+          status: "confirmed",
           isTrash: at.flags?.is_trash === true,
           hasVerifiedAsset,
           valueUsd,
           boughtSymbol,
           soldSymbol,
-        };
-      })
-      .filter((t) => t.hash && t.minedAt >= since);
+        });
+        if (out.length >= MAX_TRADES) return out;
+      }
+      url = res.links?.next;
+    }
+
+    return out;
   }
 }

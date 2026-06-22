@@ -66,8 +66,18 @@ export function PnlCard({ pnl }: { pnl: NormalizedPnL }) {
         className="muted"
         style={{ display: "flex", justifyContent: "space-between", marginTop: 16, fontSize: 12 }}
       >
-        <Link href={`/trader/${pnl.address}`}>{truncateAddress(pnl.address)} • Base</Link>
-        <span>
+        <Link href={`/trader/${pnl.address}`} style={{ flexShrink: 0 }}>
+          {truncateAddress(pnl.address)} • Base
+        </Link>
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+            marginLeft: 8,
+          }}
+        >
           proof:{pnl.proofHash}
           {pnl.noiseFilteredCount > 0 && ` • ${pnl.noiseFilteredCount} spam elendi`}
         </span>

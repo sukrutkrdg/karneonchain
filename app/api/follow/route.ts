@@ -18,8 +18,13 @@ import {
   getTraderMeta,
   subscriberCount,
 } from "@/lib/follow";
+import { rateLimit, clientKey, tooMany } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
+
+// GÜVENLİK NOTU (Faz 2): `user` kimliği imzasızdır — herkes herkes adına takip
+// edebilir. Gerçek koruma için SIWE/Farcaster Quick-Auth ile `user` doğrulanmalı.
+// Şimdilik rate-limit ek katmandır, tek koruma değildir.
 
 // ---------------------------------------------------------------------------
 // GET /api/follow?trader=0x...&user=0x...
@@ -65,11 +70,8 @@ export async function GET(req: NextRequest) {
       subscriberCount: subCount,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
-    return Response.json(
-      { error: "Veri alınamadı", detail: message },
-      { status: 500 }
-    );
+    console.error("[/api/follow GET]", err);
+    return Response.json({ error: "Veri alınamadı" }, { status: 500 });
   }
 }
 
@@ -78,6 +80,9 @@ export async function GET(req: NextRequest) {
 // ---------------------------------------------------------------------------
 
 export async function POST(req: NextRequest) {
+  const rl = await rateLimit(`follow:${clientKey(req)}`, 20, 60);
+  if (!rl.ok) return tooMany();
+
   let body: unknown;
   try {
     body = await req.json();
@@ -147,10 +152,7 @@ export async function POST(req: NextRequest) {
       isFollowing: following,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Bilinmeyen hata";
-    return Response.json(
-      { error: "İşlem başarısız", detail: message },
-      { status: 500 }
-    );
+    console.error("[/api/follow POST]", err);
+    return Response.json({ error: "İşlem başarısız" }, { status: 500 });
   }
 }
